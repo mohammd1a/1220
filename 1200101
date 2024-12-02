@@ -1,0 +1,95 @@
+import yfinance as yf
+import pandas as pd
+import ta
+import streamlit as st
+import plotly.graph_objects as go
+from datetime import datetime, timedelta
+
+# --- إعداد واجهة المستخدم ---
+st.set_page_config(page_title="تحليل العملات المشفرة بالذكاء الاصطناعي", layout="wide")
+st.title("تحليل العملات المشفرة بالذكاء الاصطناعي")
+st.sidebar.header("الإعدادات")
+
+# اختيار العملة والإطار الزمني
+symbol = st.sidebar.text_input("أدخل رمز العملة (مثل BTC-USD):", "BTC-USD")
+time_frame = st.sidebar.selectbox(
+    "اختر الإطار الزمني:",
+    ["15m", "1h", "4h", "1d", "1wk", "1mo", "1y"]
+)
+tools = st.sidebar.multiselect(
+    "اختر الأدوات التحليلية:",
+    ["الخطوط", "القنوات", "شوكات أندروز", "فيبوناتشي", "موجات إليوت", "الدورات الزمنية", "أحجام التداول", "النماذج السعرية"]
+)
+update_analysis = st.sidebar.button("تحديث التحليل")
+show_buy_targets = st.sidebar.button("أهداف الشراء")
+show_sell_targets = st.sidebar.button("أهداف الهبوط")
+
+# --- قيود التحديث ---
+if "last_update" not in st.session_state:
+    st.session_state["last_update"] = datetime.now()
+
+time_since_last_update = (datetime.now() - st.session_state["last_update"]).seconds
+if time_since_last_update < 60:
+    st.sidebar.warning("يرجى الانتظار دقيقة قبل طلب تحديث جديد.")
+
+# --- جلب البيانات ---
+@st.cache_data(ttl=60)
+def fetch_data(symbol, time_frame):
+    end_time = datetime.now()
+    start_time = end_time - timedelta(days=365 if time_frame == "1y" else 90)
+    data = yf.download(symbol, start=start_time, end=end_time, interval=time_frame)
+    return data
+
+if update_analysis and time_since_last_update >= 60:
+    data = fetch_data(symbol, time_frame)
+    st.session_state["last_update"] = datetime.now()
+else:
+    data = None
+
+# --- التحليل الفني ---
+if data is not None and not data.empty:
+    st.success(f"تم تحميل بيانات {symbol} بنجاح للإطار الزمني {time_frame}.")
+
+    # رسم الشموع اليابانية
+    fig = go.Figure()
+    fig.add_trace(go.Candlestick(
+        x=data.index,
+        open=data["Open"],
+        high=data["High"],
+        low=data["Low"],
+        close=data["Close"],
+        name="الشموع"
+    ))
+
+    # أدوات التحليل الفني
+    if "الخطوط" in tools:
+        fig.add_trace(go.Scatter(x=data.index, y=data['Close'].rolling(window=5).mean(), mode="lines", name="خط الاتجاه"))
+
+    if "فيبوناتشي" in tools:
+        high = data["High"].max()
+        low = data["Low"].min()
+        levels = [0, 0.236, 0.382, 0.5, 0.618, 1]
+        for level in levels:
+            fib_level = low + (high - low) * level
+            fig.add_hline(y=fib_level, line=dict(dash="dash"), annotation_text=f"فيبوناتشي {level}")
+
+    if "أحجام التداول" in tools:
+        fig.add_trace(go.Bar(x=data.index, y=data["Volume"], name="أحجام التداول"))
+
+    # تخصيص الرسم
+    fig.update_layout(
+        title=f"تحليل {symbol} - {time_frame}",
+        xaxis_title="التاريخ",
+        yaxis_title="السعر",
+        template="plotly_dark"
+    )
+
+    st.plotly_chart(fig)
+
+    # عرض أهداف الشراء أو البيع
+    if show_buy_targets:
+        st.success("أهداف الشراء: يتم تحديدها بناءً على التحليل الفني.")
+    if show_sell_targets:
+        st.warning("أهداف الهبوط: يتم تحديدها بناءً على التحليل الفني.")
+else:
+    st.info("يرجى إدخال بيانات صحيحة أو تحديث التحليل.")
